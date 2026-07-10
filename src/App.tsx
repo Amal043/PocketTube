@@ -15,7 +15,7 @@ import {
   AlertCircle,
   Sparkles
 } from 'lucide-react';
-import { getSupabaseClient, isSupabaseConfigured } from './lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured, supabase } from './lib/supabase';
 
 // --- TYPE DEFINITIONS ---
 interface Video {
@@ -89,6 +89,14 @@ export default function App() {
   // Decide whether to run in Mock Sandbox mode or Live mode
   const isConfigured = isSupabaseConfigured() && n8nWebhookUrl !== '';
   const [useMock, setUseMock] = useState<boolean>(!isConfigured);
+  
+  // --- AUTH STATE ---
+  const [user, setUser] = useState<any>(null);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Ingestion Form State
   const [videoUrl, setVideoUrl] = useState<string>('');
@@ -104,14 +112,38 @@ export default function App() {
   });
 
   useEffect(() => {
-    const isConfiguredEnv = isSupabaseConfigured() && n8nWebhookUrl !== '';
-    setUseMock(!isConfiguredEnv);
+    if (!supabase) return;
+    
+    // Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        setUseMock(false);
+      }
+    });
+
+    // Listen to changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        setUseMock(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const isConfiguredEnv = isSupabaseConfigured() && n8nWebhookUrl !== '';
+    if (!user) {
+      setUseMock(!isConfiguredEnv);
+    }
+  }, [user]);
 
   // Fetch videos whenever connection mode changes
   useEffect(() => {
     fetchData();
-  }, [useMock]);
+  }, [useMock, user]);
 
   // --- NOTIFICATION UTILITY ---
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -126,6 +158,66 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [notification.visible]);
+
+  // --- AUTH HANDLERS ---
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      if (authMode === 'signin') {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        showToast('Signed in successfully!', 'success');
+      } else {
+        const { error } = await supabase.auth.signUp({ 
+          email, 
+          password,
+          options: {
+            emailRedirectTo: window.location.origin
+          }
+        });
+        if (error) throw error;
+        showToast('Account created! Please check your email for confirmation link.', 'success');
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Authentication failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    if (!supabase) return;
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      setAuthError(err.message || 'Google Sign In failed');
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setUseMock(true);
+      showToast('Signed out successfully.', 'info');
+    } catch (err: any) {
+      showToast(`Sign out failed: ${err.message}`, 'error');
+    }
+  };
 
   // --- DATA OPERATIONS ---
   const fetchData = async () => {
@@ -154,10 +246,20 @@ export default function App() {
         return;
       }
 
+      // Check current session user
+      const { data: { session } } = await client.auth.getSession();
+      const activeUser = session?.user;
+      if (!activeUser) {
+        setVideos([]);
+        setLoading(false);
+        return;
+      }
+
       try {
         const { data, error } = await client
           .from('video_vault')
           .select('*')
+          .eq('user_id', activeUser.id)
           .order('next_review_date', { ascending: true });
 
         if (error) throw error;
@@ -214,6 +316,7 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'add',
+            userId: user?.id || '',
             video_url: videoUrl,
             topic,
             timestamp
@@ -326,6 +429,7 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'rate',
+            userId: user?.id || '',
             id: video.id,
             rating
           })
@@ -588,6 +692,122 @@ export default function App() {
 
   const maxChartValue = Math.max(...topicChartData.map(d => d.value), 1);
 
+  // If not using Sandbox mock mode and no user is signed in, display Auth screen
+  if (!useMock && !user) {
+    return (
+      <div className="auth-container">
+        <div className="glass-panel auth-card">
+          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+            <div style={{ background: 'var(--accent-primary)', padding: '0.65rem', borderRadius: '12px', display: 'inline-flex', marginBottom: '1rem' }}>
+              <RefreshCw size={28} className="gradient-text" style={{ color: '#fff' }} />
+            </div>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>PocketTube</h2>
+            <p className="text-sm text-muted">Spaced Repetition Video Library</p>
+          </div>
+
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
+            <button 
+              onClick={() => { setAuthMode('signin'); setAuthError(null); }}
+              style={{ 
+                flex: 1, 
+                padding: '0.75rem', 
+                background: 'none', 
+                border: 'none', 
+                borderBottom: authMode === 'signin' ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                fontWeight: authMode === 'signin' ? 600 : 500,
+                color: authMode === 'signin' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                cursor: 'pointer'
+              }}
+            >
+              Sign In
+            </button>
+            <button 
+              onClick={() => { setAuthMode('signup'); setAuthError(null); }}
+              style={{ 
+                flex: 1, 
+                padding: '0.75rem', 
+                background: 'none', 
+                border: 'none', 
+                borderBottom: authMode === 'signup' ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                fontWeight: authMode === 'signup' ? 600 : 500,
+                color: authMode === 'signup' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                cursor: 'pointer'
+              }}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authError && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: 'var(--accent-danger)', padding: '0.75rem', borderRadius: '8px', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertCircle size={16} />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleAuth}>
+            <div className="form-group">
+              <label className="form-label">Email Address</label>
+              <input 
+                type="email" 
+                className="form-input" 
+                placeholder="you@example.com" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required 
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <input 
+                type="password" 
+                className="form-input" 
+                placeholder="••••••••" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required 
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', marginTop: '0.5rem' }} disabled={authLoading}>
+              {authLoading ? 'Please wait...' : authMode === 'signin' ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+
+          <div style={{ position: 'relative', margin: '2rem 0 1.5rem', textAlign: 'center' }}>
+            <span style={{ position: 'relative', zIndex: 2, background: 'var(--bg-secondary)', padding: '0 0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>or continue with</span>
+            <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, borderTop: '1px solid var(--border-color)', zIndex: 1 }}></div>
+          </div>
+
+          <button 
+            onClick={handleGoogleLogin} 
+            className="btn btn-secondary" 
+            style={{ width: '100%', padding: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.65rem' }}
+            disabled={authLoading}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24">
+              <path fill="#EA4335" d="M12 5.04c1.67 0 3.17.58 4.35 1.71l3.25-3.25C17.65 1.58 15.01 1 12 1 7.37 1 3.42 3.65 1.44 7.53l3.87 3C6.27 7.74 8.92 5.04 12 5.04z" />
+              <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.36H12v4.51h6.46c-.29 1.48-1.14 2.73-2.4 3.58l3.76 2.92c2.2-2.03 3.67-5.02 3.67-8.65z" />
+              <path fill="#FBBC05" d="M5.31 14.78a7.22 7.22 0 0 1 0-4.56L1.44 7.22A11.96 11.96 0 0 0 0 12c0 1.72.36 3.36 1.44 4.78l3.87-3z" />
+              <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.76-2.92c-1.1.74-2.52 1.18-4.2 1.18-3.08 0-5.73-2.7-6.69-5.49l-3.87 3C3.42 20.35 7.37 23 12 23z" />
+            </svg>
+            Google
+          </button>
+          
+          <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
+            <button 
+              onClick={() => setUseMock(true)} 
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              Enter Sandbox Mode (Local Mock)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* --- MOBILE TOP BAR --- */}
@@ -596,11 +816,21 @@ export default function App() {
           <RefreshCw size={18} style={{ color: 'var(--accent-primary)' }} />
           <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>PocketTube</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-secondary)', padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: useMock ? 'var(--accent-warning)' : 'var(--accent-success)' }}></div>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-            {useMock ? 'Sandbox' : 'Live'}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-secondary)', padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: useMock ? 'var(--accent-warning)' : 'var(--accent-success)' }}></div>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+              {useMock ? 'Sandbox' : 'Live'}
+            </span>
+          </div>
+          {!useMock && user && (
+            <button 
+              onClick={handleSignOut} 
+              style={{ background: 'none', border: 'none', color: 'var(--accent-danger)', fontSize: '0.7rem', fontWeight: 600, padding: '0.25rem', cursor: 'pointer' }}
+            >
+              Logout
+            </button>
+          )}
         </div>
       </div>
 
@@ -666,6 +896,15 @@ export default function App() {
               {useMock ? 'Sandbox (Mock Data)' : 'Live Database Connected'}
             </span>
           </div>
+          {!useMock && user && (
+            <button 
+              onClick={handleSignOut} 
+              className="btn btn-secondary" 
+              style={{ width: '100%', padding: '0.4rem', fontSize: '0.8rem', borderRadius: '6px' }}
+            >
+              Sign Out
+            </button>
+          )}
         </div>
       </aside>
 

@@ -3,19 +3,15 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
+// Initialize singleton instance
+export const supabase = (supabaseUrl && supabaseAnonKey) 
+  ? createClient(supabaseUrl, supabaseAnonKey) 
+  : null;
+
 export const getSupabaseClient = () => {
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return null;
-  }
-  try {
-    return createClient(supabaseUrl, supabaseAnonKey);
-  } catch (error) {
-    console.error('Failed to initialize Supabase client:', error);
-    return null;
-  }
+  return supabase;
 };
 
 export const isSupabaseConfigured = () => {
-  return supabaseUrl.trim() !== '' && supabaseAnonKey.trim() !== '';
+  return !!supabase;
 };
-
