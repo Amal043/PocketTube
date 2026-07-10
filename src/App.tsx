@@ -381,11 +381,27 @@ export default function App() {
 
   const getEmbedUrl = (url: string, timestamp?: number): string | null => {
     try {
-      // YouTube
-      const ytReg = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-      const ytMatch = url.match(ytReg);
-      if (ytMatch && ytMatch[2].length === 11) {
-        const videoId = ytMatch[2];
+      const cleanUrl = url.trim();
+      let videoId: string | null = null;
+
+      // 1. YouTube Shorts check
+      if (cleanUrl.includes('/shorts/')) {
+        const parts = cleanUrl.split('/shorts/');
+        if (parts[1]) {
+          videoId = parts[1].split(/[?&#]/)[0];
+        }
+      }
+      
+      // 2. YouTube Standard & Share URLs
+      if (!videoId) {
+        const ytReg = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const ytMatch = cleanUrl.match(ytReg);
+        if (ytMatch && ytMatch[2] && ytMatch[2].length >= 11) {
+          videoId = ytMatch[2].substring(0, 11);
+        }
+      }
+
+      if (videoId && videoId.length === 11) {
         let embed = `https://www.youtube.com/embed/${videoId}`;
         if (timestamp && timestamp > 0) {
           embed += `?start=${timestamp}`;
@@ -395,7 +411,7 @@ export default function App() {
 
       // Vimeo
       const vimeoReg = /vimeo\.com\/(\d+)/;
-      const vimeoMatch = url.match(vimeoReg);
+      const vimeoMatch = cleanUrl.match(vimeoReg);
       if (vimeoMatch) {
         let embed = `https://player.vimeo.com/video/${vimeoMatch[1]}`;
         if (timestamp && timestamp > 0) {
@@ -407,6 +423,25 @@ export default function App() {
       console.error('Error creating embed URL:', e);
     }
     return null;
+  };
+
+  const getPlayableUrl = (url: string, timestamp?: number): string => {
+    if (!timestamp || timestamp <= 0) return url;
+    try {
+      const cleanUrl = url.trim();
+      if (cleanUrl.includes('youtube.com') || cleanUrl.includes('youtu.be')) {
+        const baseUrl = cleanUrl.replace(/[\?&]t=[^&]*/g, '');
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        return `${baseUrl}${separator}t=${timestamp}s`;
+      }
+      if (cleanUrl.includes('vimeo.com')) {
+        const baseUrl = cleanUrl.split('#')[0];
+        return `${baseUrl}#t=${timestamp}s`;
+      }
+    } catch (e) {
+      console.error('Error generating playable URL:', e);
+    }
+    return url;
   };
 
   const formatTimestamp = (sec: number) => {
@@ -735,7 +770,7 @@ export default function App() {
                               <AlertCircle size={48} style={{ color: 'var(--accent-warning)', marginBottom: '1rem' }} />
                               <h4>External Video Link</h4>
                               <p className="text-sm" style={{ margin: '0.5rem 0 1.5rem' }}>This URL format cannot be embedded directly. Open it in a new window to watch, then rate your recall below.</p>
-                              <a href={currentVideo.video_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+                              <a href={getPlayableUrl(currentVideo.video_url, currentVideo.timestamp)} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
                                 <ExternalLink size={16} /> Open Video
                               </a>
                             </div>
@@ -745,7 +780,7 @@ export default function App() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
                           <div>
                             <h3 style={{ fontSize: '1.25rem' }}>{currentVideo.topic}</h3>
-                            <a href={currentVideo.video_url} target="_blank" rel="noopener noreferrer" className="text-sm" style={{ color: 'var(--accent-secondary)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem', textDecoration: 'none' }}>
+                            <a href={getPlayableUrl(currentVideo.video_url, currentVideo.timestamp)} target="_blank" rel="noopener noreferrer" className="text-sm" style={{ color: 'var(--accent-secondary)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem', textDecoration: 'none' }}>
                               Original URL <ExternalLink size={12} />
                             </a>
                           </div>
