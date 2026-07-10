@@ -75,6 +75,7 @@ const DEFAULT_MOCK_VIDEOS: Video[] = [
 
 // Load configuration securely from environment variables at build-time
 const n8nWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || '';
+const youtubeApiKeys = (import.meta.env.VITE_YOUTUBE_API_KEYS || '').split(',').map((k: string) => k.trim()).filter(Boolean);
 
 export default function App() {
   // --- STATE ---
@@ -82,6 +83,8 @@ export default function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [reviewVideoId, setReviewVideoId] = useState<string | null>(null);
+  const [embedStatus, setEmbedStatus] = useState<'loading' | 'embeddable' | 'blocked'>('loading');
+  const [currentApiKeyIndex, setCurrentApiKeyIndex] = useState<number>(0);
   
   // Decide whether to run in Mock Sandbox mode or Live mode
   const isConfigured = isSupabaseConfigured() && n8nWebhookUrl !== '';
@@ -466,6 +469,111 @@ export default function App() {
   const totalCount = videos.length;
   const learningCount = videos.filter(v => v.repetitions < 4).length;
   const graduatedCount = videos.filter(v => v.repetitions >= 4).length;
+
+  const activeReviewVideo = reviewVideoId 
+    ? videos.find(v => v.id === reviewVideoId) || getDueVideos()[0]
+    : getDueVideos()[0];
+
+  useEffect(() => {
+    if (!activeReviewVideo) {
+      setEmbedStatus('blocked');
+      return;
+    }
+    
+    const cleanUrl = activeReviewVideo.video_url.trim();
+    let videoId: string | null = null;
+    
+    if (cleanUrl.includes('/shorts/')) {
+      const parts = cleanUrl.split('/shorts/');
+      if (parts[1]) {
+        videoId = parts[1].split(/[?&#]/)[0];
+      }
+    }
+    if (!videoId) {
+      const ytReg = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+      const ytMatch = cleanUrl.match(ytReg);
+      if (ytMatch && ytMatch[2] && ytMatch[2].length >= 11) {
+        videoId = ytMatch[2].substring(0, 11);
+      }
+    }
+    
+    if (!videoId) {
+      if (cleanUrl.includes('vimeo.com')) {
+        setEmbedStatus('embeddable');
+      } else {
+        setEmbedStatus('blocked');
+      }
+      return;
+    }
+    
+    let isSubscribed = true;
+    setEmbedStatus('loading');
+    
+    const validateVideo = async () => {
+      if (youtubeApiKeys.length === 0) {
+        if (isSubscribed) setEmbedStatus('embeddable');
+        return;
+      }
+      
+      let keyIndex = currentApiKeyIndex;
+      let checkedCount = 0;
+      
+      while (checkedCount < youtubeApiKeys.length) {
+        const apiKey = youtubeApiKeys[keyIndex];
+        try {
+          const apiURL = `https://www.googleapis.com/youtube/v3/videos?part=status&id=${videoId}&key=${apiKey}`;
+          const res = await fetch(apiURL);
+          
+          if (res.status === 403 || res.status === 400) {
+            console.warn(`YouTube API key index ${keyIndex} failed with status ${res.status}. Rotating...`);
+            keyIndex = (keyIndex + 1) % youtubeApiKeys.length;
+            checkedCount++;
+            continue;
+          }
+          
+          if (!res.ok) {
+            keyIndex = (keyIndex + 1) % youtubeApiKeys.length;
+            checkedCount++;
+            continue;
+          }
+          
+          const data = await res.json();
+          if (isSubscribed) {
+            setCurrentApiKeyIndex(keyIndex);
+            
+            if (data.items && data.items.length > 0) {
+              const embeddable = data.items[0].status?.embeddable ?? true;
+              const privacyStatus = data.items[0].status?.privacyStatus ?? 'public';
+              
+              if (embeddable && privacyStatus !== 'private') {
+                setEmbedStatus('embeddable');
+              } else {
+                setEmbedStatus('blocked');
+              }
+            } else {
+              setEmbedStatus('blocked');
+            }
+          }
+          return;
+        } catch (err) {
+          console.error(`Fetch error with key index ${keyIndex}:`, err);
+          keyIndex = (keyIndex + 1) % youtubeApiKeys.length;
+          checkedCount++;
+        }
+      }
+      
+      if (isSubscribed) {
+        console.error("All YouTube API keys are exhausted or failed. Defaulting to external link.");
+        setEmbedStatus('blocked');
+      }
+    };
+    
+    validateVideo();
+    
+    return () => {
+      isSubscribed = false;
+    };
+  }, [activeReviewVideo?.id, currentApiKeyIndex]);
   
   // Topic Distribution for Charts
   const topicDistribution = videos.reduce((acc: { [key: string]: number }, curr) => {
@@ -745,9 +853,7 @@ export default function App() {
               </div>
             ) : (getDueVideos().length > 0 || reviewVideoId) ? (
               (() => {
-                const currentVideo = reviewVideoId 
-                  ? videos.find(v => v.id === reviewVideoId) || getDueVideos()[0]
-                  : getDueVideos()[0];
+                const currentVideo = activeReviewVideo;
                 const embedUrl = getEmbedUrl(currentVideo.video_url, currentVideo.timestamp);
 
                 return (
@@ -755,7 +861,15 @@ export default function App() {
                     {/* Left Column: Embed Player */}
                     <div>
                       <div className="glass-panel" style={{ padding: '1.25rem' }}>
-                        {embedUrl ? (
+                        {embedStatus === 'loading' ? (
+                          <div className="video-player-container">
+                            <div className="video-player-fallback" style={{ background: 'var(--bg-secondary)' }}>
+                              <RefreshCw size={36} className="gradient-text" style={{ animation: 'spin 1s linear infinite', marginBottom: '1rem' }} />
+                              <h4>Verifying Playback Capabilities...</h4>
+                              <p className="text-sm">Checking YouTube embedding permissions...</p>
+                            </div>
+                          </div>
+                        ) : (embedUrl && embedStatus === 'embeddable') ? (
                           <div className="video-player-container">
                             <iframe 
                               src={embedUrl}
