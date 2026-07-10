@@ -447,13 +447,27 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* --- MOBILE TOP BAR --- */}
+      <div className="mobile-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <RefreshCw size={18} style={{ color: 'var(--accent-primary)' }} />
+          <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>PocketTube</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-secondary)', padding: '0.25rem 0.5rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: useMock ? 'var(--accent-warning)' : 'var(--accent-success)' }}></div>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+            {useMock ? 'Sandbox' : 'Live'}
+          </span>
+        </div>
+      </div>
+
       {/* --- SIDEBAR --- */}
       <aside className="sidebar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2.5rem' }}>
+        <div className="sidebar-logo">
           <div style={{ background: 'var(--accent-primary)', padding: '0.5rem', borderRadius: '8px', display: 'flex' }}>
             <RefreshCw size={22} className="gradient-text" style={{ color: '#fff' }} />
           </div>
-          <div>
+          <div className="sidebar-logo-text">
             <h2 style={{ fontSize: '1.25rem', fontWeight: 700, lineHeight: 1 }}>PocketTube</h2>
             <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--accent-secondary)', fontWeight: 600 }}>SM-2 Automated Brain</span>
           </div>
@@ -502,14 +516,13 @@ export default function App() {
           </button>
         </nav>
 
-        <div style={{ marginTop: 'auto' }}>
+        <div className="sidebar-footer">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: useMock ? 'var(--accent-warning)' : 'var(--accent-success)' }}></div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
               {useMock ? 'Sandbox (Mock Data)' : 'Live Database Connected'}
             </span>
           </div>
-
         </div>
       </aside>
 
@@ -591,7 +604,7 @@ export default function App() {
             </div>
 
             {/* Quick Actions & Topic Charts */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem', marginTop: '2rem' }}>
+            <div className="dashboard-grid">
               
               {/* Due Next Preview */}
               <div className="glass-panel" style={{ padding: '1.75rem' }}>
@@ -703,7 +716,7 @@ export default function App() {
                 const embedUrl = getEmbedUrl(currentVideo.video_url, currentVideo.timestamp);
 
                 return (
-                  <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '2rem' }}>
+                  <div className="review-grid">
                     {/* Left Column: Embed Player */}
                     <div>
                       <div className="glass-panel" style={{ padding: '1.25rem' }}>
